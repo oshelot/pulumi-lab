@@ -1,0 +1,12 @@
+name: pulumi-ecs-app
+description: A minimal AWS Python Pulumi program
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: venv
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: aws-python
+main: infra

@@ -1,0 +1,10 @@
+{
+  "name": "pulumi-app",
+  "version": "1.0.0",
+  "description": "Sample Node app for Pulumi ECS demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": { "express": "^4.18.2" }
+}
