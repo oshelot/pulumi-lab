@@ -1,6 +1,6 @@
 # Pulumi Option 1 — ECS Fargate (Python)
 
-A minimal, interview-ready deployment of a Node/Express app to **AWS ECS Fargate** behind an **ALB**, with a **Pulumi config** value rendered at `/`.
+A minimal deployment of a Node/Express app to **AWS ECS Fargate** behind an **ALB**, with a **Pulumi config** value rendered at `/`.
 
 ## What this demonstrates
 - Pulumi **config → env var → UI** flow via `message`.
