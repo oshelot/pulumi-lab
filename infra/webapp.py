@@ -14,6 +14,7 @@ from typing import Optional, List
 import pulumi
 import pulumi_aws as aws
 import pulumi_docker as docker
+import pulumi_tls as tls
 
 
 class FargateWebApp(pulumi.ComponentResource):
@@ -68,14 +69,19 @@ class FargateWebApp(pulumi.ComponentResource):
         )
 
         # --- Networking: Security Groups for ALB and Service ---
-        # ALB SG: open to the world on 80 (simple for demo; HTTPS is easy to add later).
+        # ALB SG: open to the world on 80 and 443 for HTTP and HTTPS traffic.
         lb_sg = aws.ec2.SecurityGroup(
             f"{name}-lb-sg",
             vpc_id=vpc_id,
             description="ALB security group",
-            ingress=[aws.ec2.SecurityGroupIngressArgs(
-                protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"]
-            )],
+            ingress=[
+                aws.ec2.SecurityGroupIngressArgs(
+                    protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"]
+                ),
+                aws.ec2.SecurityGroupIngressArgs(
+                    protocol="tcp", from_port=443, to_port=443, cidr_blocks=["0.0.0.0/0"]
+                )
+            ],
             egress=[aws.ec2.SecurityGroupEgressArgs(
                 protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"]
             )],
@@ -109,6 +115,44 @@ class FargateWebApp(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
+        # --- SSL Certificate for HTTPS ---
+        # For demo purposes, we'll create a self-signed certificate
+        # In production, you'd use ACM with your own domain and DNS validation
+        
+        # Generate a private key
+        private_key = tls.PrivateKey(
+            f"{name}-private-key",
+            algorithm="RSA",
+            rsa_bits=2048,
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+        
+        # Create a self-signed certificate
+        self_signed_cert = tls.SelfSignedCert(
+            f"{name}-self-signed-cert",
+            key_algorithm="RSA",
+            private_key_pem=private_key.private_key_pem,
+            subject=tls.SelfSignedCertSubjectArgs(
+                common_name="localhost",
+                organization="Demo Org",
+            ),
+            validity_period_hours=8760,  # 1 year
+            allowed_uses=[
+                "key_encipherment",
+                "digital_signature",
+                "server_auth",
+            ],
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+        
+        # Import the certificate into ACM
+        cert = aws.acm.Certificate(
+            f"{name}-cert",
+            private_key=private_key.private_key_pem,
+            certificate_body=self_signed_cert.cert_pem,
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+
         tg = aws.lb.TargetGroup(
             f"{name}-tg",
             port=80,                              # ALB side uses 80
@@ -121,11 +165,31 @@ class FargateWebApp(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=lb),
         )
 
+        # HTTP listener that redirects to HTTPS
         listener = aws.lb.Listener(
             f"{name}-http",
             load_balancer_arn=lb.arn,
             port=80,
             protocol="HTTP",
+            default_actions=[aws.lb.ListenerDefaultActionArgs(
+                type="redirect",
+                redirect=aws.lb.ListenerDefaultActionRedirectArgs(
+                    port="443",
+                    protocol="HTTPS",
+                    status_code="HTTP_301"
+                )
+            )],
+            opts=pulumi.ResourceOptions(parent=lb),
+        )
+
+        # HTTPS listener on port 443
+        https_listener = aws.lb.Listener(
+            f"{name}-https",
+            load_balancer_arn=lb.arn,
+            port=443,
+            protocol="HTTPS",
+            ssl_policy="ELBSecurityPolicy-TLS-1-2-2017-01",
+            certificate_arn=cert.arn,
             default_actions=[aws.lb.ListenerDefaultActionArgs(
                 type="forward", target_group_arn=tg.arn
             )],
@@ -219,12 +283,13 @@ class FargateWebApp(pulumi.ComponentResource):
                 container_name="app",
                 container_port=container_port,
             )],
-            # Listener must exist before service tries to attach to the TG.
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[listener]),
+            # Listeners must exist before service tries to attach to the TG.
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[listener, https_listener]),
         )
 
         # Nice, stable output for the stack: ALB DNS is the “app URL”.
-        self.url = lb.dns_name
+        # Use HTTPS URL since we now support TLS
+        self.url = pulumi.Output.concat("https://", lb.dns_name)
 
         # Always register outputs from a ComponentResource so they flow to the stack.
         self.register_outputs({"url": self.url})

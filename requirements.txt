@@ -1,3 +1,4 @@
 pulumi==3.*
 pulumi-aws==7.*
 pulumi-docker==4.*
+pulumi-tls==5.*
